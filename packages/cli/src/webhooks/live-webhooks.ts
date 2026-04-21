@@ -29,12 +29,14 @@ import { WorkflowStaticDataService } from '@/workflows/workflow-static-data.serv
  */
 @Service()
 export class LiveWebhooks implements IWebhookManager {
+	protected expectedNodeType: 'form' | 'mcp' | undefined = undefined;
+
 	constructor(
-		private readonly logger: Logger,
-		private readonly nodeTypes: NodeTypes,
-		private readonly webhookService: WebhookService,
-		private readonly workflowRepository: WorkflowRepository,
-		private readonly workflowStaticDataService: WorkflowStaticDataService,
+		protected readonly logger: Logger,
+		protected readonly nodeTypes: NodeTypes,
+		protected readonly webhookService: WebhookService,
+		protected readonly workflowRepository: WorkflowRepository,
+		protected readonly workflowStaticDataService: WorkflowStaticDataService,
 	) {}
 
 	async getWebhookMethods(path: string) {
@@ -62,7 +64,24 @@ export class LiveWebhooks implements IWebhookManager {
 				// we need to use webhookId for matching
 				isChatWebhookNode(type, webhookId),
 		);
+
+		if (webhookNode && !this.matchesNodeTypeForNode(webhookNode)) {
+			return undefined;
+		}
+
 		return webhookNode?.parameters?.options as WebhookAccessControlOptions;
+	}
+
+	protected matchesNodeType(declared: 'form' | 'webhook' | 'mcp' | undefined): boolean {
+		if (this.expectedNodeType === 'form') return declared === 'form';
+		if (this.expectedNodeType === 'mcp') return declared === 'mcp';
+		return declared === undefined || declared === 'webhook';
+	}
+
+	private matchesNodeTypeForNode(node: INode): boolean {
+		const nodeType = this.nodeTypes.getByNameAndVersion(node.type, node.typeVersion);
+		const declared = nodeType.description.webhooks?.find((w) => w.nodeType)?.nodeType;
+		return this.matchesNodeType(declared);
 	}
 
 	/**
@@ -146,6 +165,13 @@ export class LiveWebhooks implements IWebhookManager {
 				.getNodeWebhooks(workflow, workflow.getNode(webhook.node) as INode, additionalData)
 				.find((w) => w.httpMethod === httpMethod && w.path === webhook.webhookPath) as IWebhookData;
 
+			if (!this.matchesNodeType(webhookData?.webhookDescription.nodeType)) {
+				throw new WebhookNotFoundError(
+					{ path, httpMethod, webhookMethods: await this.getWebhookMethods(path) },
+					{ hint: 'production' },
+				);
+			}
+
 			// Get the node which has the webhook defined to know where to start from and to
 			// get additional data
 			const workflowStartNode = workflow.getNode(webhookData.node);
@@ -186,7 +212,7 @@ export class LiveWebhooks implements IWebhookManager {
 		}
 	}
 
-	private async findWebhook(path: string, httpMethod: IHttpRequestMethods) {
+	protected async findWebhook(path: string, httpMethod: IHttpRequestMethods) {
 		// Remove trailing slash
 		if (path.endsWith('/')) {
 			path = path.slice(0, -1);
@@ -200,4 +226,14 @@ export class LiveWebhooks implements IWebhookManager {
 
 		return webhook;
 	}
+}
+
+@Service()
+export class LiveFormWebhooks extends LiveWebhooks {
+	protected override expectedNodeType = 'form' as const;
+}
+
+@Service()
+export class LiveMcpWebhooks extends LiveWebhooks {
+	protected override expectedNodeType = 'mcp' as const;
 }

@@ -5,6 +5,7 @@ import type express from 'express';
 import { InstanceSettings } from 'n8n-core';
 import { WebhookPathTakenError, Workflow } from 'n8n-workflow';
 import type {
+	INode,
 	IWebhookData,
 	IWorkflowExecuteAdditionalData,
 	IHttpRequestMethods,
@@ -49,16 +50,30 @@ const SINGLE_WEBHOOK_TRIGGERS = [
  */
 @Service()
 export class TestWebhooks implements IWebhookManager {
+	protected expectedNodeType: 'form' | 'mcp' | undefined = undefined;
+
 	constructor(
-		private readonly push: Push,
-		private readonly nodeTypes: NodeTypes,
-		private readonly registrations: TestWebhookRegistrationsService,
-		private readonly instanceSettings: InstanceSettings,
-		private readonly publisher: Publisher,
-		private readonly webhookService: WebhookService,
+		protected readonly push: Push,
+		protected readonly nodeTypes: NodeTypes,
+		protected readonly registrations: TestWebhookRegistrationsService,
+		protected readonly instanceSettings: InstanceSettings,
+		protected readonly publisher: Publisher,
+		protected readonly webhookService: WebhookService,
 	) {}
 
 	private timeouts: { [webhookKey: string]: NodeJS.Timeout } = {};
+
+	protected matchesNodeType(declared: 'form' | 'webhook' | 'mcp' | undefined): boolean {
+		if (this.expectedNodeType === 'form') return declared === 'form';
+		if (this.expectedNodeType === 'mcp') return declared === 'mcp';
+		return declared === undefined || declared === 'webhook';
+	}
+
+	private matchesNodeTypeForNode(node: INode): boolean {
+		const nodeType = this.nodeTypes.getByNameAndVersion(node.type, node.typeVersion);
+		const declared = nodeType.description.webhooks?.find((w) => w.nodeType)?.nodeType;
+		return this.matchesNodeType(declared);
+	}
 
 	/**
 	 * Return a promise that resolves when the test webhook is called.
@@ -97,6 +112,14 @@ export class TestWebhooks implements IWebhookManager {
 				if (segment.startsWith(':')) {
 					request.params[segment.slice(1)] = segments[index];
 				}
+			});
+		}
+
+		if (!this.matchesNodeType(webhook.webhookDescription.nodeType)) {
+			throw new WebhookNotFoundError({
+				path,
+				httpMethod,
+				webhookMethods: await this.getWebhookMethods(path),
 			});
 		}
 
@@ -274,6 +297,10 @@ export class TestWebhooks implements IWebhookManager {
 				(parameters?.httpMethod ?? 'GET') === httpMethod &&
 				'webhook' in this.nodeTypes.getByNameAndVersion(type, typeVersion),
 		);
+
+		if (webhookNode && !this.matchesNodeTypeForNode(webhookNode)) {
+			return undefined;
+		}
 
 		return webhookNode?.parameters?.options as WebhookAccessControlOptions;
 	}
@@ -555,4 +582,14 @@ export class TestWebhooks implements IWebhookManager {
 			settings: workflowEntity.settings,
 		});
 	}
+}
+
+@Service()
+export class TestFormWebhooks extends TestWebhooks {
+	protected override expectedNodeType = 'form' as const;
+}
+
+@Service()
+export class TestMcpWebhooks extends TestWebhooks {
+	protected override expectedNodeType = 'mcp' as const;
 }
