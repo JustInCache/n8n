@@ -245,4 +245,142 @@ describe('Folders Handler', () => {
 			expect(mockFolderService.getManyAndCount).not.toHaveBeenCalled();
 		});
 	});
+
+	describe('getFolder', () => {
+		const folderId = 'test-folder-id';
+		const callGetFolder = async (req: unknown) =>
+			getHandlerFn('getFolder')(req, mockResponse as Response);
+
+		it('should return folder with counts', async () => {
+			const folder = { id: folderId, name: 'My Folder', parentFolderId: null };
+			mockFolderService.findFolderInProjectOrFail.mockResolvedValue(folder as never);
+			mockFolderService.getFolderAndWorkflowCount.mockResolvedValue({
+				totalSubFolders: 3,
+				totalWorkflows: 5,
+			} as never);
+
+			await callGetFolder({
+				user: makeUser(),
+				params: { projectId, folderId },
+			});
+
+			expect(mockFolderService.findFolderInProjectOrFail).toHaveBeenCalledWith(folderId, projectId);
+			expect(mockFolderService.getFolderAndWorkflowCount).toHaveBeenCalledWith(folderId, projectId);
+			expect(mockResponse.json).toHaveBeenCalledWith({
+				...folder,
+				totalSubFolders: 3,
+				totalWorkflows: 5,
+			});
+		});
+
+		it('should throw NotFoundError when folder does not exist', async () => {
+			mockFolderService.findFolderInProjectOrFail.mockRejectedValue(
+				new FolderNotFoundError(folderId),
+			);
+
+			await expect(
+				callGetFolder({
+					user: makeUser(),
+					params: { projectId, folderId },
+				}),
+			).rejects.toThrow(NotFoundError);
+		});
+
+		it('should throw NotFoundError when project does not exist', async () => {
+			mockProjectRepository.findOneBy.mockResolvedValue(null);
+
+			await expect(
+				callGetFolder({
+					user: makeUser(),
+					params: { projectId: 'non-existent', folderId },
+				}),
+			).rejects.toThrow(NotFoundError);
+		});
+
+		it('should throw ForbiddenError when user lacks project scope', async () => {
+			mockProjectService.getProjectWithScope.mockResolvedValue(null as never);
+
+			await expect(
+				callGetFolder({
+					user: makeUser(),
+					params: { projectId, folderId },
+				}),
+			).rejects.toThrow(ForbiddenError);
+		});
+	});
+
+	describe('updateFolder', () => {
+		const folderId = 'test-folder-id';
+		const callUpdateFolder = async (req: unknown) =>
+			getHandlerFn('updateFolder')(req, mockResponse as Response);
+
+		it('should update folder name and return updated folder', async () => {
+			const updatedFolder = { id: folderId, name: 'Renamed' };
+			mockFolderService.updateFolder.mockResolvedValue(undefined as never);
+			mockFolderService.findFolderInProjectOrFail.mockResolvedValue(updatedFolder as never);
+
+			await callUpdateFolder({
+				user: makeUser(),
+				params: { projectId, folderId },
+				body: { name: 'Renamed' },
+			});
+
+			expect(mockFolderService.updateFolder).toHaveBeenCalledWith(folderId, projectId, {
+				name: 'Renamed',
+			});
+			expect(mockResponse.json).toHaveBeenCalledWith(updatedFolder);
+		});
+
+		it('should update parentFolderId', async () => {
+			const updatedFolder = { id: folderId, name: 'Folder' };
+			mockFolderService.updateFolder.mockResolvedValue(undefined as never);
+			mockFolderService.findFolderInProjectOrFail.mockResolvedValue(updatedFolder as never);
+
+			await callUpdateFolder({
+				user: makeUser(),
+				params: { projectId, folderId },
+				body: { parentFolderId: 'new-parent-id' },
+			});
+
+			expect(mockFolderService.updateFolder).toHaveBeenCalledWith(folderId, projectId, {
+				parentFolderId: 'new-parent-id',
+			});
+		});
+
+		it('should throw NotFoundError when folder does not exist', async () => {
+			mockFolderService.updateFolder.mockRejectedValue(new FolderNotFoundError(folderId));
+
+			await expect(
+				callUpdateFolder({
+					user: makeUser(),
+					params: { projectId, folderId },
+					body: { name: 'Renamed' },
+				}),
+			).rejects.toThrow(NotFoundError);
+		});
+
+		it('should throw NotFoundError when project does not exist', async () => {
+			mockProjectRepository.findOneBy.mockResolvedValue(null);
+
+			await expect(
+				callUpdateFolder({
+					user: makeUser(),
+					params: { projectId: 'non-existent', folderId },
+					body: { name: 'Renamed' },
+				}),
+			).rejects.toThrow(NotFoundError);
+		});
+
+		it('should throw ForbiddenError when user lacks project scope', async () => {
+			mockProjectService.getProjectWithScope.mockResolvedValue(null as never);
+
+			await expect(
+				callUpdateFolder({
+					user: makeUser(),
+					params: { projectId, folderId },
+					body: { name: 'Renamed' },
+				}),
+			).rejects.toThrow(ForbiddenError);
+		});
+	});
 });
